@@ -1,42 +1,63 @@
-import aiosqlite
-from config import DB_PATH
-from datetime import datetime
 import json
+from datetime import datetime
+from pathlib import Path
 
-# ============================
-#       INIT DATABASE
-# ============================
+import aiosqlite
+
+from config import DATA_DIR, DB_PATH, DEFAULT_TIMEZONE
+
+
+POST_RECURRENCE_COLUMNS = {
+    "next_run_at": "TEXT",
+    "last_run_at": "TEXT",
+    "end_at": "TEXT",
+    "timezone": f"TEXT DEFAULT '{DEFAULT_TIMEZONE}'",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
+
+async def _ensure_columns(db, table_name: str, expected_columns: dict[str, str]):
+    cursor = await db.execute(f"PRAGMA table_info({table_name})")
+    existing = {row[1] for row in await cursor.fetchall()}
+
+    for column_name, column_type in expected_columns.items():
+        if column_name in existing:
+            continue
+        await db.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+        )
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+    Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+    db_path = Path(DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # ---- POSTS (контент + статус) ----
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT NOT NULL,
-                content TEXT NOT NULL,        -- текст или JSON
-                publish_time TEXT NOT NULL,   -- ISO-строка
-                status TEXT DEFAULT 'pending' -- pending / sent
+                content TEXT NOT NULL,
+                publish_time TEXT NOT NULL,
+                status TEXT DEFAULT 'pending'
             )
             """
         )
 
-        # ---- CHATS (каналы / группы) ----
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS chats (
-                id TEXT PRIMARY KEY,          -- chat_id
+                id TEXT PRIMARY KEY,
                 title TEXT,
-                type TEXT,                    -- channel / group / supergroup
+                type TEXT,
                 added_at TEXT
             )
             """
         )
 
-        # ---- POST → CHATS (many-to-many) ----
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS post_targets (
@@ -47,7 +68,6 @@ async def init_db():
             """
         )
 
-        # ---- POST BUTTONS (inline buttons) ----
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS post_buttons (
@@ -71,48 +91,62 @@ async def init_db():
             """
         )
 
+        await _ensure_columns(db, "post_recurrence", POST_RECURRENCE_COLUMNS)
         await db.commit()
 
 
-# ============================
-#         SAVE POST
-# ============================
-
-
-async def save_post(post_type: str, content: str, publish_time: str) -> int:
-    """
-    Сохраняем ТОЛЬКО пост (без чатов).
-    """
+async def save_post(
+    post_type: str,
+    content: str,
+    publish_time: str,
+    status: str = "pending",
+) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
+        cursor = await db.execute(
             """
-            INSERT INTO posts (type, content, publish_time)
-            VALUES (?, ?, ?)
+            INSERT INTO posts (type, content, publish_time, status)
+            VALUES (?, ?, ?, ?)
             """,
-            (post_type, content, publish_time),
+            (post_type, content, publish_time, status),
         )
         await db.commit()
+        return cursor.lastrowid
 
-        cursor = await db.execute("SELECT last_insert_rowid()")
+
+async def get_post(post_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM posts WHERE id = ?", (post_id,))
         row = await cursor.fetchone()
-        return row[0]
+        return dict(row) if row else None
 
 
-# ============================
-#        POST TARGETS
-# ============================
+async def get_scheduled_posts(post_id: int) -> dict | None:
+    return await get_post(post_id)
 
 
 async def add_post_targets(post_id: int, chat_ids: list[str]):
     async with aiosqlite.connect(DB_PATH) as db:
-        for chat_id in chat_ids:
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO post_targets (post_id, chat_id)
-                VALUES (?, ?)
-                """,
-                (post_id, chat_id),
-            )
+        await db.executemany(
+            """
+            INSERT OR IGNORE INTO post_targets (post_id, chat_id)
+            VALUES (?, ?)
+            """,
+            [(post_id, chat_id) for chat_id in chat_ids],
+        )
+        await db.commit()
+
+
+async def replace_post_targets(post_id: int, chat_ids: list[str]):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM post_targets WHERE post_id = ?", (post_id,))
+        await db.executemany(
+            """
+            INSERT OR IGNORE INTO post_targets (post_id, chat_id)
+            VALUES (?, ?)
+            """,
+            [(post_id, chat_id) for chat_id in chat_ids],
+        )
         await db.commit()
 
 
@@ -123,16 +157,12 @@ async def get_post_targets(post_id: int) -> list[str]:
             SELECT chat_id
             FROM post_targets
             WHERE post_id = ?
+            ORDER BY chat_id
             """,
             (post_id,),
         )
         rows = await cursor.fetchall()
-        return [r[0] for r in rows]
-
-
-# ============================
-#           CHATS
-# ============================
+        return [row[0] for row in rows]
 
 
 async def add_chat(chat_id: str, title: str | None, chat_type: str):
@@ -150,40 +180,16 @@ async def add_chat(chat_id: str, title: str | None, chat_type: str):
 async def get_all_chats() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM chats")
+        cursor = await db.execute("SELECT * FROM chats ORDER BY title ASC, id ASC")
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(row) for row in rows]
 
 
-# ============================
-#         GET POST
-# ============================
-
-
-async def get_scheduled_posts(post_id: int) -> dict | None:
+async def delete_chat(chat_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM posts WHERE id = ?", (post_id,))
-        row = await cursor.fetchone()
-        return dict(row) if row else None
-
-
-# ============================
-#     GET ALL FUTURE POSTS
-# ============================
-
-
-async def get_all_pending_posts() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM posts WHERE status = 'pending'")
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
-
-
-# ============================
-#         UPDATE POST
-# ============================
+        await db.execute("DELETE FROM post_targets WHERE chat_id = ?", (chat_id,))
+        await db.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+        await db.commit()
 
 
 async def update_post(
@@ -191,110 +197,75 @@ async def update_post(
     new_content: str | None = None,
     new_type: str | None = None,
     new_publish_time: str | None = None,
+    new_status: str | None = None,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        query = "UPDATE posts SET "
-        params = []
+    assignments = []
+    params = []
 
-        if new_content is not None:
-            query += "content = ?, "
-            params.append(new_content)
+    if new_content is not None:
+        assignments.append("content = ?")
+        params.append(new_content)
 
-        if new_type is not None:
-            query += "type = ?, "
-            params.append(new_type)
+    if new_type is not None:
+        assignments.append("type = ?")
+        params.append(new_type)
 
-        if new_publish_time is not None:
-            query += "publish_time = ?, "
-            params.append(new_publish_time)
+    if new_publish_time is not None:
+        assignments.append("publish_time = ?")
+        params.append(new_publish_time)
 
-        query = query.rstrip(", ")
-        query += " WHERE id = ?"
-        params.append(post_id)
+    if new_status is not None:
+        assignments.append("status = ?")
+        params.append(new_status)
 
-        await db.execute(query, params)
-        await db.commit()
+    if not assignments:
+        return
 
+    params.append(post_id)
 
-# ============================
-#      MARK AS SENT
-# ============================
-
-
-async def mark_post_as_sent(post_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "UPDATE posts SET status = 'sent' WHERE id = ?",
-            (post_id,),
+            f"UPDATE posts SET {', '.join(assignments)} WHERE id = ?",
+            params,
         )
         await db.commit()
 
 
-# ============================
-#         DELETE POST
-# ============================
+async def mark_post_as_sent(post_id: int):
+    await update_post(post_id, new_status="sent")
+
+
+async def mark_post_as_pending(post_id: int):
+    await update_post(post_id, new_status="pending")
 
 
 async def delete_post(post_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+        await db.execute("DELETE FROM post_buttons WHERE post_id = ?", (post_id,))
         await db.execute("DELETE FROM post_targets WHERE post_id = ?", (post_id,))
+        await db.execute("DELETE FROM post_recurrence WHERE post_id = ?", (post_id,))
+        await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
         await db.commit()
 
 
 async def delete_post_buttons(post_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "DELETE FROM post_buttons WHERE post_id = ?",
-            (post_id,),
-        )
+        await db.execute("DELETE FROM post_buttons WHERE post_id = ?", (post_id,))
         await db.commit()
 
 
-# ============================
-#     PAGINATION (PENDING)
-# ============================
-
-
-async def get_pending_posts_page(limit: int, offset: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            """
-            SELECT *
-            FROM posts
-            WHERE status = 'pending'
-            ORDER BY publish_time ASC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
-
-
-# ============================
-#       POST BUTTONS
-# ============================
-
-
 async def save_post_buttons(post_id: int, buttons: list[dict]):
-    """
-    buttons = [
-        {"row": 0, "text": "Кнопка", "url": "https://..."},
-        {"row": 0, "text": "Кнопка 2", "url": "https://..."},
-        {"row": 1, "text": "Кнопка 3", "url": "https://..."},
-    ]
-    """
     async with aiosqlite.connect(DB_PATH) as db:
-        for btn in buttons:
-            await db.execute(
-                """
-                INSERT INTO post_buttons (post_id, row, text, url)
-                VALUES (?, ?, ?, ?)
-                """,
-                (post_id, btn["row"], btn["text"], btn["url"]),
-            )
+        await db.executemany(
+            """
+            INSERT INTO post_buttons (post_id, row, text, url)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (post_id, button["row"], button["text"], button["url"])
+                for button in buttons
+            ],
+        )
         await db.commit()
 
 
@@ -311,75 +282,205 @@ async def get_post_buttons(post_id: int) -> list[dict]:
             (post_id,),
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(row) for row in rows]
 
 
-# ============================
-#          AUTOPOST
-# ============================
-
-
-async def save_recurrence(post_id: int, mode: str, config: dict):
+async def upsert_recurrence_rule(
+    post_id: int,
+    config: dict,
+    next_run_at: str,
+    end_at: str | None,
+    timezone_name: str = DEFAULT_TIMEZONE,
+):
+    now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT OR REPLACE INTO post_recurrence (post_id, mode, config, is_active)
-            VALUES (?, ?, ?, 1)
+            INSERT INTO post_recurrence (
+                post_id,
+                mode,
+                config,
+                next_run_at,
+                last_run_at,
+                end_at,
+                timezone,
+                is_active,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(post_id) DO UPDATE SET
+                mode = excluded.mode,
+                config = excluded.config,
+                next_run_at = excluded.next_run_at,
+                end_at = excluded.end_at,
+                timezone = excluded.timezone,
+                is_active = 1,
+                updated_at = excluded.updated_at
             """,
-            (post_id, mode, json.dumps(config)),
+            (
+                post_id,
+                "rule",
+                json.dumps(config, ensure_ascii=False),
+                next_run_at,
+                None,
+                end_at,
+                timezone_name,
+                now,
+                now,
+            ),
         )
         await db.commit()
 
 
-async def get_recurrence(post_id: int) -> dict | None:
+async def get_active_recurrence(post_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM post_recurrence WHERE post_id = ? AND is_active = 1",
+            """
+            SELECT *
+            FROM post_recurrence
+            WHERE post_id = ? AND is_active = 1
+            """,
             (post_id,),
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        result["config"] = json.loads(result["config"])
+        return result
+
+
+async def advance_recurrence_rule(
+    post_id: int,
+    last_run_at: str,
+    next_run_at: str | None,
+    is_active: bool,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            UPDATE post_recurrence
+            SET last_run_at = ?,
+                next_run_at = ?,
+                is_active = ?,
+                updated_at = ?
+            WHERE post_id = ?
+            """,
+            (
+                last_run_at,
+                next_run_at,
+                1 if is_active else 0,
+                datetime.utcnow().isoformat(),
+                post_id,
+            ),
+        )
+        await db.commit()
 
 
 async def disable_recurrence(post_id: int):
+    await advance_recurrence_rule(post_id, None, None, False)
+
+
+async def list_scheduled_items(limit: int, offset: int) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE post_recurrence SET is_active = 0 WHERE post_id = ?",
-            (post_id,),
-        )
-        await db.commit()
-
-
-async def create_scheduled_post(base_post_id: int, publish_at: datetime) -> int:
-    """
-    Создаёт копию поста base_post_id с новым временем публикации
-    и возвращает новый post_id
-    """
-
-    # 1️⃣ получаем исходный пост
-    post = await get_scheduled_posts(base_post_id)
-    if not post:
-        raise ValueError("Base post not found")
-
-    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            INSERT INTO posts (
-                type,
-                content,
-                publish_time,
-                status
+            SELECT
+                p.*,
+                pr.next_run_at,
+                pr.end_at,
+                pr.timezone,
+                pr.config AS recurrence_config,
+                CASE WHEN pr.post_id IS NULL THEN 0 ELSE 1 END AS is_recurring
+            FROM posts p
+            LEFT JOIN post_recurrence pr
+                ON pr.post_id = p.id AND pr.is_active = 1
+            WHERE EXISTS (
+                SELECT 1
+                FROM post_targets pt
+                WHERE pt.post_id = p.id
             )
-            VALUES (?, ?, ?, ?)
+            AND (p.status = 'pending' OR pr.post_id IS NOT NULL)
+            ORDER BY COALESCE(pr.next_run_at, p.publish_time) ASC, p.id ASC
+            LIMIT ? OFFSET ?
             """,
-            (
-                post["type"],
-                post["content"],
-                publish_at.isoformat(),
-                "pending",  # ВАЖНО
-            ),
+            (limit, offset),
         )
+        rows = await cursor.fetchall()
 
-        await db.commit()
-        return cursor.lastrowid
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item.get("recurrence_config"):
+            item["recurrence_config"] = json.loads(item["recurrence_config"])
+        result.append(item)
+    return result
+
+
+async def get_all_pending_posts() -> list[dict]:
+    return await list_schedulable_posts()
+
+
+async def list_schedulable_posts() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                p.*,
+                pr.next_run_at,
+                pr.end_at,
+                pr.timezone,
+                pr.config AS recurrence_config,
+                CASE WHEN pr.post_id IS NULL THEN 0 ELSE 1 END AS is_recurring
+            FROM posts p
+            LEFT JOIN post_recurrence pr
+                ON pr.post_id = p.id AND pr.is_active = 1
+            WHERE EXISTS (
+                SELECT 1
+                FROM post_targets pt
+                WHERE pt.post_id = p.id
+            )
+            AND (p.status = 'pending' OR pr.post_id IS NOT NULL)
+            ORDER BY COALESCE(pr.next_run_at, p.publish_time) ASC, p.id ASC
+            """
+        )
+        rows = await cursor.fetchall()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item.get("recurrence_config"):
+            item["recurrence_config"] = json.loads(item["recurrence_config"])
+        result.append(item)
+    return result
+
+
+async def get_pending_posts_page(limit: int, offset: int) -> list[dict]:
+    return await list_scheduled_items(limit, offset)
+
+
+async def find_legacy_orphan_posts() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT p.*
+            FROM posts p
+            LEFT JOIN post_recurrence pr
+                ON pr.post_id = p.id AND pr.is_active = 1
+            WHERE p.status = 'pending'
+            AND pr.post_id IS NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM post_targets pt
+                WHERE pt.post_id = p.id
+            )
+            ORDER BY p.publish_time ASC, p.id ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]

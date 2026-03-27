@@ -27,6 +27,6 @@ def build_chat_select_kb(chats: list[dict], selected: set[str]) -> InlineKeyboar
         ]
     )
 
-    kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_content")])
+    kb.append([InlineKeyboardButton(text="❌ Отмена", callback_data="draft_cancel")])
 
     return InlineKeyboardMarkup(inline_keyboard=kb)

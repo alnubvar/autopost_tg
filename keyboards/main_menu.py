@@ -6,6 +6,7 @@ def admin_menu():
         [KeyboardButton(text="📝 Добавить пост")],
         [KeyboardButton(text="📋 Мои запланированные")],
         [KeyboardButton(text="➕ Добавить чат")],
+        [KeyboardButton(text="🗂 Управление чатами")],
         # [KeyboardButton(text="🗑 Удалить пост")],
         # [KeyboardButton(text="⚙️ Настройки")]
     ]

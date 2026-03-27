@@ -18,17 +18,14 @@ def _type_icon(t: str) -> str:
 
 
 def build_posts_list_kb(posts, page: int, page_size: int) -> InlineKeyboardMarkup:
-    """
-    Клавиатура со списком постов: каждая кнопка = один пост.
-    Пагинация: "⬅️ Назад" / "➡️ Далее".
-    """
     builder = InlineKeyboardBuilder()
 
     for post in posts:
         t = post["type"]
         icon = _type_icon(t)
-        time_str = post["publish_time"]
-        text = f"{icon} #{post['id']} • {time_str}"
+        time_str = post.get("next_run_at") or post["publish_time"]
+        repeat_prefix = "🔁 " if post.get("is_recurring") else ""
+        text = f"{repeat_prefix}{icon} #{post['id']} • {time_str}"
 
         builder.button(
             text=text,

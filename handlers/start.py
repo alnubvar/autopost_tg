@@ -1,10 +1,10 @@
 from aiogram import Router, types
 from aiogram.filters import Command
+
 from keyboards.main_menu import admin_menu
+from utils.access import ACCESS_DENIED_TEXT, is_admin
 
 router = Router()
-
-ADMIN_ID = [580759300, 8120213148, 7773812278]  # теперь список, но имя то же!
 
 
 def register_start_handlers(dp):
@@ -13,9 +13,9 @@ def register_start_handlers(dp):
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
-    if message.from_user.id in ADMIN_ID:  # <<< вот это единственное важное изменение
+    if is_admin(message.from_user.id):
         await message.answer(
             "Приветствую! 😊\nВыбери действие:", reply_markup=admin_menu()
         )
     else:
-        await message.answer("Привет! Это бот-планировщик постов.")
+        await message.answer(ACCESS_DENIED_TEXT)

@@ -1,192 +1,191 @@
-# 📢 Telegram Autopost Bot (with Repeat & Looping)
+# Telegram Autopost Bot
 
-Telegram-бот для автопубликации постов в чаты и каналы с поддержкой:
-- зацикленного автоповтора,
-- гибкого расписания,
-- нескольких чатов,
-- редактирования постов,
-- удобного управления запланированными публикациями.
+A Telegram bot for creating, scheduling, and repeating posts across multiple chats and channels.
 
-Проект находится в активной разработке и постепенно приводится к прод-архитектуре.
+The project is built with `aiogram`, `APScheduler`, and `SQLite`. It supports one-time posting, repeat rules, post editing, inline buttons, and chat management.
 
----
+## Features
 
-## 🚀 Возможности
+- Create posts for multiple target chats
+- Support text, photo, video, document, audio, voice, animation, and media groups
+- Schedule a post once at a specific date and time
+- Configure recurring rules:
+  - specific dates
+  - weekdays
+  - month days
+  - fixed times
+  - interval mode such as `30m` or `1h 30m`
+- Edit scheduled posts
+- Stop recurring posts without deleting the base post
+- Manage supported chats from inside the bot
+- Restrict access with `ADMIN_IDS`
+- Preserve runtime data in a persistent data directory
 
-### 📌 Публикация постов
-- Текстовые посты
-- Медиа (фото, видео, документы, альбомы)
-- Inline-кнопки
-- Публикация в несколько чатов / каналов
-
-### 🔁 Автоповтор / зацикленность
-- Повтор каждый день
-- Повтор в выбранные даты
-- Повтор по дням недели
-- Повтор на месяц
-- Фиксированное время (например: `12:30, 18:00`)
-- Интервалы (`30m`, `1h 30m`, `12h`)
-- Минимальный интервал: **15 минут**
-
-### 🗓 Удобный сценарий настройки
-1. Выбор чатов
-2. Редактирование поста (текст, медиа, кнопки)
-3. Выбор действия:
-   - Опубликовать сейчас
-   - Автоповтор / зацикленность
-4. Выбор дат через календарь
-5. Ввод времени / интервала
-6. Подтверждение
-
----
-
-## 📋 Управление запланированными постами (в разработке)
-
-Планируемая логика:
-- Сначала выбор чата
-- Отображение **одного зацикленного поста**, даже если он публикуется 100+ раз
-- Возможность:
-  - изменить текст
-  - изменить расписание
-  - остановить автоповтор
-  - удалить правило
-
----
-
-## 🧠 Архитектура (в процессе переработки)
-
-⚠️ Проект **переходит на новую архитектуру автоповтора**:
-
-- ❌ НЕ создаётся 100+ одинаковых постов в БД
-- ✅ Используется единое правило автоповтора (`repeat_rules`)
-- ✅ Один scheduler-job управляет всеми циклами
-- ✅ Устойчивость к рестартам
-- ✅ Удобное управление
-
----
-
-## 🛠 Технологии
-
-- Python 3.10+
-- aiogram 3.x
-- APScheduler
-- SQLite (на старте)
-- FSM (Finite State Machine)
-- pytz
-
----
-
-## 📂 Структура проекта
+## Project Structure
 
 ```text
 autopost_tg/
-│
 ├── bot.py
-├── config.py            # токен бота (не в git)
-├── .env                 # переменные окружения (не в git)
-├── .gitignore
+├── config.py
+├── .env.example
 ├── requirements.txt
 ├── README.md
-│
+├── LICENCE
 ├── handlers/
-│   ├── start.py
-│   ├── manage_post.py
-│   ├── auto_repeat.py
-│   └── ...
-│
-├── utils/
-│   ├── scheduler.py
-│   ├── db.py
-│   ├── repeat_time_parser.py
-│   └── ...
-│
 ├── keyboards/
-│   └── ...
-│
+├── utils/
 └── data/
-    └── *.db (не в git)
 ```
 
-## ⚙️ Установка и запуск
+Key modules:
 
-### 1️⃣ Клонирование репозитория
-```bash
-git clone https://github.com/USERNAME/REPO_NAME.git
-cd autopost_tg
-```
+- `bot.py`: application entrypoint
+- `config.py`: environment loading and runtime path configuration
+- `handlers/`: bot interaction flows
+- `keyboards/`: reply and inline keyboard builders
+- `utils/db.py`: SQLite access layer
+- `utils/scheduler.py`: APScheduler integration
+- `utils/recurrence.py`: recurrence rule engine
+- `utils/posting.py`: Telegram send helpers
 
-### 2️⃣ Виртуальное окружение
-```bash
-python -m venv env
-source env/bin/activate  # Linux / Mac
-env\Scripts\activate     # Windows
-```
+## Requirements
 
-### 3️⃣ Установка зависимостей
+- Python 3.10+
+- Telegram Bot API token
+
+Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4️⃣ Настройка
+## Environment Variables
 
-*Создай файл .env или config.py и укажи токен бота:*
-```bash
+Required:
+
+- `BOT_TOKEN`: Telegram bot token
+- `ADMIN_IDS`: comma-separated Telegram user IDs allowed to use the bot
+
+Optional:
+
+- `DEFAULT_TIMEZONE`: bot timezone, default is `Europe/Moscow`
+- `DATA_DIR`: directory for runtime data, default is `./data` locally
+- `DB_PATH`: optional custom SQLite file path; if omitted, the bot uses `DATA_DIR/posts.db`
+
+Example:
+
+```env
 BOT_TOKEN=your_telegram_bot_token
+ADMIN_IDS=123456789,987654321
+DEFAULT_TIMEZONE=Europe/Moscow
+DATA_DIR=./data
 ```
 
-### 5️⃣ Запуск
+## Local Run
+
+1. Create and activate a virtual environment
+2. Install dependencies
+3. Copy `.env.example` to `.env`
+4. Fill in your variables
+5. Run:
+
 ```bash
 python bot.py
 ```
 
-## 🔐 Безопасность
+The bot creates the runtime data directory automatically if it does not exist.
 
-- Файлы `.env`, базы данных и токены **не хранятся в репозитории**
-- Для защиты чувствительных данных используется `.gitignore`
-- Рекомендуется деплой и запуск бота на сервере / VPS
+## Data Storage
 
----
+The project uses a persistent data directory for runtime files.
 
-## 🧩 Статус проекта
+By default:
 
-🚧 **Активная разработка**
+- local development uses `./data`
+- Railway should use `/data` through a mounted Volume
 
-### Ближайшие задачи:
-- Полная переработка автоповтора (`repeat_rules`)
-- Просмотр и управление запланированными постами
-- Infinite loop posting (бесконечная зацикленность)
-- Улучшение UX и сценариев взаимодействия
-- Поддержка нескольких таймзон
+By default, the SQLite database path is:
 
----
-
-## ✅ Что сделать сейчас
-
-1. Создай файл `README.md`
-2. Вставь туда этот текст
-3. Закоммить изменения:
-
-```bash
-git add README.md
-git commit -m "Add README with project status and security info"
-git push
+```text
+DATA_DIR/posts.db
 ```
 
----
+You can still override it with `DB_PATH` if needed.
 
-## 👤 Автор и контакты
+## Railway Deployment
 
-Проект разработан и поддерживается автором как коммерческий Telegram-инструмент
-для автопостинга и автоматизации контента.
+### Recommended Setup
 
-### 📎 Контакты
-- **Telegram:** [@alnub_work](https://t.me/alnub_work)
-- **GitHub:** https://github.com/alnubvar
-- **Email:** alnubwork@gmail.com
+Deploy from GitHub and attach a Railway Volume mounted at:
 
----
+```text
+/data
+```
 
-## ⚖️ Лицензия
+Set the following variables in Railway:
 
-Проект распространяется под лицензией **MIT**
-(можно использовать, дорабатывать и интегрировать в коммерческие проекты).
+```env
+BOT_TOKEN=your_telegram_bot_token
+ADMIN_IDS=123456789
+DEFAULT_TIMEZONE=Europe/Moscow
+DATA_DIR=/data
+```
+
+Usually you do not need to set `DB_PATH` on Railway, because the bot will automatically use:
+
+```text
+/data/posts.db
+```
+
+### Start Command
+
+```bash
+python bot.py
+```
+
+### Railway Volume Note
+
+SQLite is file-based. Without a persistent Volume, your database can be lost after redeploys or container restarts.
+
+For Railway production usage:
+
+- attach a Volume
+- mount it to `/data`
+- set `DATA_DIR=/data`
+
+## Security Notes
+
+- Do not commit `.env`
+- Do not commit any `*.db` files
+- Restrict access with `ADMIN_IDS`
+- The bot refuses to start if `BOT_TOKEN` or `ADMIN_IDS` are missing
+
+## Git Ignore
+
+The repository is configured to ignore:
+
+- `.env`
+- `*.db`
+- virtual environments
+- `__pycache__`
+- editor files and local artifacts
+
+## Manual Pre-Deploy Checklist
+
+- Verify `ADMIN_IDS`
+- Verify `DEFAULT_TIMEZONE`
+- Create one post locally
+- Create one one-time schedule
+- Create one recurring schedule
+- Restart the bot and confirm scheduled items are restored
+- Confirm the bot can write to the configured `DATA_DIR`
+
+## Author
+
+- Telegram: [@alnub_work](https://t.me/alnub_work)
+- GitHub: [alnubvar](https://github.com/alnubvar)
+- Email: alnubwork@gmail.com
+
+## License
+
+MIT License

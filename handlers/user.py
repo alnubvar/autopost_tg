@@ -1,8 +1,8 @@
 from aiogram import Router, types, F
 
-router = Router()
+from utils.access import ACCESS_DENIED_TEXT, is_admin
 
-ADMIN_ID = [580759300, 8120213148, 7773812278]  # тот же ID, что и в admin.py
+router = Router()
 
 
 def register_user_handlers(dp):
@@ -11,8 +11,15 @@ def register_user_handlers(dp):
 
 @router.message(F.text)
 async def echo(message: types.Message):
-    # не мешаем админу работать с ботом
-    if message.from_user.id == ADMIN_ID:
+    if is_admin(message.from_user.id):
         return
 
-    await message.answer(f"Ты написал: {message.text}")
+    await message.answer(ACCESS_DENIED_TEXT)
+
+
+@router.callback_query()
+async def deny_callback(callback: types.CallbackQuery):
+    if is_admin(callback.from_user.id):
+        return
+
+    await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)

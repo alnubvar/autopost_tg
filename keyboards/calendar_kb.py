@@ -2,8 +2,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import date, datetime
 import calendar
 import pytz
+from config import DEFAULT_TIMEZONE
 
-LA = pytz.timezone("America/New_York")
+LA = pytz.timezone(DEFAULT_TIMEZONE)
 
 # 🎉 Праздники
 HOLIDAYS = {

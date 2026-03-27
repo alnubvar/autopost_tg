@@ -1,51 +1,49 @@
-# bot.py
 import asyncio
-from aiogram import Bot, Dispatcher
-from config import BOT_TOKEN
+from datetime import datetime
 
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+
+from config import ADMIN_IDS, BOT_TOKEN
+from handlers.admin import register_admin_handlers
+from handlers.auto_repeat import register_auto_repeat_handlers
+from handlers.manage_post import register_manage_post_handlers
 from handlers.start import register_start_handlers
 from handlers.user import register_user_handlers
-from handlers.admin import register_admin_handlers
-
-from utils.scheduler import scheduler, schedule_post
-from utils.db import init_db, get_all_pending_posts
-
-from datetime import datetime, timedelta
-import pytz
-from handlers.manage_post import register_manage_post_handlers
-from handlers.auto_repeat import register_auto_repeat_handlers
-
-
-LA = pytz.timezone("America/New_York")
+from utils.db import find_legacy_orphan_posts, init_db, list_schedulable_posts
+from utils.logger import logger
+from utils.scheduler import schedule_post, scheduler
 
 
 async def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN is not set")
+    if not ADMIN_IDS:
+        raise ValueError("ADMIN_IDS is not set")
 
-    bot = Bot(token=BOT_TOKEN)
-
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
 
-    await init_db()  # создаём таблицы
-
-    # Запускаем планировщик
+    await init_db()
     scheduler.start()
 
-    # ВАЖНО: при рестарте подгружаем все незавершённые задачи
-    pending_posts = await get_all_pending_posts()
-    for post in pending_posts:
-        publish_dt = datetime.fromisoformat(post["publish_time"])
-        schedule_post(bot, post["id"], publish_dt)
+    for item in await list_schedulable_posts():
+        run_at = item.get("next_run_at") or item["publish_time"]
+        if not run_at:
+            continue
+        schedule_post(bot, item["id"], datetime.fromisoformat(run_at))
 
-    # Регистрируем хендлеры
+    legacy_orphans = await find_legacy_orphan_posts()
+    if legacy_orphans:
+        logger.warning("Found %s legacy orphan pending posts", len(legacy_orphans))
+
     register_start_handlers(dp)
-    register_admin_handlers(dp)  # ← admin должен быть раньше user!
+    register_admin_handlers(dp)
     register_auto_repeat_handlers(dp)
     register_manage_post_handlers(dp)
     register_user_handlers(dp)
 
-    print("Bot is running...")
+    logger.info("Bot is running")
     await dp.start_polling(bot)
 
 
