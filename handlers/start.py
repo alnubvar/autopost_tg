@@ -1,4 +1,5 @@
 from aiogram import Router, types
+from aiogram.enums import ChatType
 from aiogram.filters import Command
 
 from keyboards.main_menu import admin_menu
@@ -17,5 +18,5 @@ async def cmd_start(message: types.Message):
         await message.answer(
             "Приветствую! 😊\nВыбери действие:", reply_markup=admin_menu()
         )
-    else:
+    elif message.chat.type == ChatType.PRIVATE:
         await message.answer(ACCESS_DENIED_TEXT)

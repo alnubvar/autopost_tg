@@ -5,6 +5,7 @@ from pathlib import Path
 import aiosqlite
 
 from config import DATA_DIR, DB_PATH, DEFAULT_TIMEZONE
+from utils.logger import logger
 
 
 POST_RECURRENCE_COLUMNS = {
@@ -33,6 +34,17 @@ async def init_db():
     Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
     db_path = Path(DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existed_before_init = db_path.exists()
+    size_before_init = db_path.stat().st_size if existed_before_init else 0
+
+    logger.info("Runtime DATA_DIR: %s", DATA_DIR)
+    logger.info("SQLite DB_PATH: %s", DB_PATH)
+    logger.info(
+        "SQLite file exists before init: %s, size=%s bytes",
+        existed_before_init,
+        size_before_init,
+    )
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -93,6 +105,14 @@ async def init_db():
 
         await _ensure_columns(db, "post_recurrence", POST_RECURRENCE_COLUMNS)
         await db.commit()
+
+    existed_after_init = db_path.exists()
+    size_after_init = db_path.stat().st_size if existed_after_init else 0
+    logger.info(
+        "SQLite file exists after init: %s, size=%s bytes",
+        existed_after_init,
+        size_after_init,
+    )
 
 
 async def save_post(

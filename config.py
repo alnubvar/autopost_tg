@@ -6,14 +6,33 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-_data_dir = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
-if not _data_dir.is_absolute():
-    _data_dir = (BASE_DIR / _data_dir).resolve()
 
-_default_db_path = _data_dir / "posts.db"
-_db_path = Path(os.getenv("DB_PATH", str(_default_db_path)))
-if not _db_path.is_absolute():
-    _db_path = (BASE_DIR / _db_path).resolve()
+
+def _resolve_data_dir() -> Path:
+    raw_data_dir = os.getenv("DATA_DIR", str(BASE_DIR / "data"))
+    data_dir = Path(raw_data_dir)
+    if not data_dir.is_absolute():
+        data_dir = (BASE_DIR / data_dir).resolve()
+    return data_dir
+
+
+def _resolve_db_path(data_dir: Path) -> Path:
+    raw_db_path = os.getenv("DB_PATH", "").strip()
+    if not raw_db_path:
+        return (data_dir / "posts.db").resolve()
+
+    db_path = Path(raw_db_path)
+    if db_path.is_absolute():
+        return db_path.resolve()
+
+    # Runtime data must stay inside DATA_DIR on Railway and locally.
+    # For legacy values like `data/posts.db` or `posts.db`, normalize them
+    # to a single persistent target: DATA_DIR/posts.db.
+    return (data_dir / db_path.name).resolve()
+
+
+_data_dir = _resolve_data_dir()
+_db_path = _resolve_db_path(_data_dir)
 
 DATA_DIR = str(_data_dir)
 DB_PATH = str(_db_path)

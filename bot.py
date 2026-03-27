@@ -10,7 +10,12 @@ from handlers.auto_repeat import register_auto_repeat_handlers
 from handlers.manage_post import register_manage_post_handlers
 from handlers.start import register_start_handlers
 from handlers.user import register_user_handlers
-from utils.db import find_legacy_orphan_posts, init_db, list_schedulable_posts
+from utils.db import (
+    find_legacy_orphan_posts,
+    get_all_chats,
+    init_db,
+    list_schedulable_posts,
+)
 from utils.logger import logger
 from utils.scheduler import schedule_post, scheduler
 
@@ -26,6 +31,9 @@ async def main():
 
     await init_db()
     scheduler.start()
+
+    chats = await get_all_chats()
+    logger.info("Loaded %s chats from persistent storage", len(chats))
 
     for item in await list_schedulable_posts():
         run_at = item.get("next_run_at") or item["publish_time"]
